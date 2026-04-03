@@ -139,6 +139,18 @@ def find_match(user_field):
             semantic_bonus = get_semantic_score(user_field, target_cn)
             total_score = min(100, base_score + semantic_bonus)
             
+            # 精确匹配优先返回
+            if match_type == '完全匹配':
+                return {
+                    'user_field': user_field,
+                    'matched_cn': target_cn,
+                    'matched_en': target_en,
+                    'matched_interface': target_interface,
+                    'source': target_interface,
+                    'match_type': match_type,
+                    'score': total_score
+                }
+            
             if best_match is None or total_score > best_match['score']:
                 best_match = {
                     'user_field': user_field,
