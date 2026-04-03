@@ -68,12 +68,37 @@ def parse_excel_fields(filepath):
     """解析Excel文件中的字段"""
     fields = []
     try:
-        df = pd.read_excel(filepath)
-        if '字段名称' in df.columns:
-            fields = df['字段名称'].dropna().astype(str).tolist()
-            fields = [x.strip() for x in fields if x.strip()]
+        # 尝试读取所有sheet
+        xl = pd.ExcelFile(filepath)
+        
+        # 常见列名
+        possible_cols = ['字段名称', '字段', '名称', 'name', 'field', 'Field', '字段名']
+        
+        for sheet in xl.sheet_names:
+            df = pd.read_excel(filepath, sheet_name=sheet)
+            
+            # 尝试找到包含字段名的列
+            for col in df.columns:
+                col_str = str(col).strip()
+                if col_str in possible_cols:
+                    # 找到匹配的列
+                    fields = df[col].dropna().astype(str).tolist()
+                    fields = [x.strip() for x in fields if x.strip()]
+                    print(f"从sheet '{sheet}' 列 '{col}' 解析出 {len(fields)} 个字段")
+                    return fields
+            
+            # 如果没找到，尝试第一列
+            if len(df.columns) > 0:
+                first_col = df.columns[0]
+                fields = df[first_col].dropna().astype(str).tolist()
+                fields = [x.strip() for x in fields if x.strip()]
+                if fields:
+                    print(f"从sheet '{sheet}' 第一列解析出 {len(fields)} 个字段")
+                    return fields
+    
     except Exception as e:
         print(f"解析失败: {e}")
+    
     return fields
 
 def find_match(user_field):
