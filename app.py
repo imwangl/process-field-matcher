@@ -17,10 +17,49 @@ VERSION = "1.0.0"
 
 # 加载匹配数据
 PROCESS_FIELDS = []  # 加工字段表
+CUSTOM_FILE_PATH = None  # 用户上传的自定义匹配文件路径
 
-def load_match_data():
-    global PROCESS_FIELDS
+def load_match_data_from_excel(filepath, sheet_name=None):
+    """从Excel文件加载匹配数据"""
+    fields = []
+    try:
+        if sheet_name:
+            df = pd.read_excel(filepath, sheet_name=sheet_name)
+            fields = df.to_dict('records')
+        else:
+            # 读取所有sheet
+            xl = pd.ExcelFile(filepath)
+            for sheet in xl.sheet_names:
+                df = pd.read_excel(filepath, sheet_name=sheet)
+                fields.extend(df.to_dict('records'))
+        return fields
+    except Exception as e:
+        print(f"加载失败: {e}")
+        return []
+
+def load_match_data(custom_file=None):
+    global PROCESS_FIELDS, CUSTOM_FILE_PATH
     
+    # 优先使用用户上传的文件
+    if custom_file and os.path.exists(custom_file):
+        try:
+            # 读取sheet1和sheet2
+            xl = pd.ExcelFile(custom_file)
+            all_fields = []
+            
+            for sheet in xl.sheet_names:
+                df = pd.read_excel(custom_file, sheet_name=sheet)
+                all_fields.extend(df.to_dict('records'))
+            
+            if all_fields:
+                PROCESS_FIELDS = all_fields
+                CUSTOM_FILE_PATH = custom_file
+                print(f"使用自定义文件: {custom_file}, 总字段: {len(PROCESS_FIELDS)} 条")
+                return
+        except Exception as e:
+            print(f"加载自定义文件失败: {e}, 尝试加载默认文件")
+    
+    # 回退到默认文件
     local_file = os.path.join(os.path.dirname(__file__), 'templates', '加工字段表.xlsx')
     if os.path.exists(local_file):
         try:
@@ -101,6 +140,16 @@ def parse_excel_fields(filepath):
     
     return fields
 
+def is_english_field(field):
+    """判断是否为英文字段（主要包含英文字母）"""
+    if not field:
+        return False
+    field = str(field).strip()
+    # 统计英文字母数量
+    letter_count = sum(1 for c in field if c.isalpha() and c.isascii())
+    # 如果超过50%是英文字母，认为是英文字段
+    return letter_count > len(field) * 0.5
+
 def find_match(user_field):
     user_field = str(user_field).strip()
     if not user_field:
@@ -108,40 +157,66 @@ def find_match(user_field):
     
     user_clean = clean_text(user_field)
     best_match = None
+    exact_match = None  # 完全匹配
+    
+    is_english = is_english_field(user_field)
     
     for row in PROCESS_FIELDS:
-        target_cn = str(row.get('参数说明', '')).strip()  # 中文名
-        target_en = str(row.get('参数名称', '')).strip()  # 英文名
-        target_interface = str(row.get('接口', '')).strip()  # 接口名
+        # 列2: 参数名称 (英文名)
+        # 列3: 参数说明 (中文名)
+        target_en = str(row.get('参数名称', row.get('参数名称', ''))).strip()  # 列2
+        target_cn = str(row.get('参数说明', row.get('参数说明', ''))).strip()  # 列3
+        target_interface = str(row.get('接口', row.get('接口', ''))).strip()
         
-        if not target_cn:
-            continue
-        
-        target_clean = clean_text(target_cn)
-        
-        # 检查中文名匹配
         base_score = 0
         match_type = ''
+        matched_value = None
         
-        if user_field == target_cn or user_clean == target_clean:
-            base_score = 100
-            match_type = '完全匹配'
+        if is_english:
+            # 英文字段：优先匹配列2（参数名称），不匹配列3
+            if target_en and (user_field == target_en or user_clean == clean_text(target_en)):
+                base_score = 100
+                match_type = '完全匹配'
+                matched_value = target_en
+            elif target_en:
+                try:
+                    sim = Levenshtein.ratio(user_clean, clean_text(target_en))
+                    if sim >= 0.4:
+                        base_score = int(sim * 100)
+                        match_type = '推荐'
+                        matched_value = target_en
+                except:
+                    pass
         else:
-            try:
-                sim = Levenshtein.ratio(user_clean, target_clean)
-                if sim >= 0.4:
-                    base_score = int(sim * 100)
-                    match_type = '推荐'
-            except:
-                pass
+            # 中文字段：匹配列3（参数说明）
+            if target_cn and (user_field == target_cn or user_clean == clean_text(target_cn)):
+                base_score = 100
+                match_type = '完全匹配'
+                matched_value = target_cn
+            elif target_cn:
+                try:
+                    sim = Levenshtein.ratio(user_clean, clean_text(target_cn))
+                    if sim >= 0.4:
+                        base_score = int(sim * 100)
+                        match_type = '推荐'
+                        matched_value = target_cn
+                except:
+                    pass
         
         if base_score > 0:
-            semantic_bonus = get_semantic_score(user_field, target_cn)
+            # 对于英文，增加语义得分
+            if is_english and target_en:
+                semantic_bonus = get_semantic_score(user_field, target_en)
+            elif not is_english and target_cn:
+                semantic_bonus = get_semantic_score(user_field, target_cn)
+            else:
+                semantic_bonus = 0
+                
             total_score = min(100, base_score + semantic_bonus)
             
-            # 精确匹配优先返回
+            # 完全匹配优先记录
             if match_type == '完全匹配':
-                return {
+                exact_match = {
                     'user_field': user_field,
                     'matched_cn': target_cn,
                     'matched_en': target_en,
@@ -150,8 +225,7 @@ def find_match(user_field):
                     'match_type': match_type,
                     'score': total_score
                 }
-            
-            if best_match is None or total_score > best_match['score']:
+            elif best_match is None or total_score > best_match['score']:
                 best_match = {
                     'user_field': user_field,
                     'matched_cn': target_cn,
@@ -161,6 +235,10 @@ def find_match(user_field):
                     'match_type': match_type,
                     'score': total_score
                 }
+    
+    # 完全匹配优先返回
+    if exact_match:
+        return exact_match
     
     return best_match
 
@@ -176,6 +254,15 @@ def download_template():
 @app.route('/match', methods=['POST'])
 def match_fields():
     try:
+        # 检查是否有自定义匹配文件上传
+        match_file = request.files.get('match_file')
+        if match_file and match_file.filename:
+            ext = os.path.splitext(match_file.filename)[1].lower()
+            if ext in ['.xlsx', '.xls']:
+                match_filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'match_' + match_file.filename)
+                match_file.save(match_filepath)
+                load_match_data(match_filepath)
+        
         single_field = request.form.get('single_field')
         
         if single_field:
@@ -241,4 +328,4 @@ def download_result():
     return "文件未找到", 404
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5003, debug=True)
