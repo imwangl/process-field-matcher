@@ -59,13 +59,18 @@ def load_match_data(custom_file=None):
         except Exception as e:
             print(f"加载自定义文件失败: {e}, 尝试加载默认文件")
     
-    # 回退到默认文件
+    # 回退到默认文件 - 读取所有sheet
     local_file = os.path.join(os.path.dirname(__file__), 'templates', '加工字段表.xlsx')
     if os.path.exists(local_file):
         try:
-            df = pd.read_excel(local_file, sheet_name='Sheet1')
-            if '参数说明' in df.columns:
-                PROCESS_FIELDS = df.to_dict('records')
+            xl = pd.ExcelFile(local_file)
+            all_fields = []
+            for sheet in xl.sheet_names:
+                df = pd.read_excel(local_file, sheet_name=sheet)
+                if '参数说明' in df.columns or '参数名称' in df.columns:
+                    all_fields.extend(df.to_dict('records'))
+            if all_fields:
+                PROCESS_FIELDS = all_fields
                 print(f"加工字段: {len(PROCESS_FIELDS)} 条")
         except Exception as e:
             print(f"加载失败: {e}")
