@@ -13,7 +13,7 @@ app.config['OUTPUT_FOLDER'] = 'outputs'
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
-VERSION = "1.0.0"
+VERSION = "1.0.2"
 
 # 加载匹配数据
 PROCESS_FIELDS = []  # 加工字段表
